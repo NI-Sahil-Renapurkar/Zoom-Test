@@ -1,0 +1,6 @@
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' https://appssdk.zoom.us; connect-src 'self' https://appssdk.zoom.us https://api.hoogah.com; style-src 'self' 'unsafe-inline'; frame-ancestors 'self' https://*.zoom.us"
