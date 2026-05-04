@@ -1,6 +1,7 @@
 import zoomSdk from "@zoom/appssdk";
 import type { AppState } from "./types.js";
 import {
+  debugLog,
   exchangeContextToken,
   fetchAssignmentPlan,
   fetchEventContext,
@@ -163,6 +164,7 @@ async function runAuthorizeFlow(stateValue: string, codeChallenge: string): Prom
     const handler = (event: unknown) => {
       const e = event as { code?: string; state?: string };
       console.log("onAuthorized event:", e);
+      void debugLog("onAuthorized", { event: e, expectedState: stateValue });
       if (e.state && e.state !== stateValue) return;
       if (!e.code) {
         clearTimeout(timeout);
@@ -175,14 +177,30 @@ async function runAuthorizeFlow(stateValue: string, codeChallenge: string): Prom
 
     (zoomSdk as unknown as { onAuthorized: (cb: (e: unknown) => void) => void }).onAuthorized(handler);
 
+    void debugLog("authorize.call", { stateValue, codeChallenge });
+
     zoomSdk
-      .authorize({ state: stateValue, codeChallenge } as unknown as Parameters<typeof zoomSdk.authorize>[0])
-      .then((res) => console.log("authorize ack:", res))
+      .authorize({
+        state: stateValue,
+        codeChallenge,
+        codeChallengeMethod: "S256",
+      } as unknown as Parameters<typeof zoomSdk.authorize>[0])
+      .then((res) => {
+        console.log("authorize ack:", res);
+        void debugLog("authorize.ack", { res });
+      })
       .catch((err) => {
         clearTimeout(timeout);
+        void debugLog("authorize.catch", { error: serializeError(err) });
         reject(err);
       });
   });
+}
+
+function serializeError(err: unknown): Record<string, unknown> {
+  if (err instanceof Error) return { name: err.name, message: err.message, stack: err.stack };
+  if (typeof err === "object" && err !== null) return err as Record<string, unknown>;
+  return { value: String(err) };
 }
 
 async function init(): Promise<void> {
@@ -224,12 +242,15 @@ async function init(): Promise<void> {
 
   const { codeVerifier, codeChallenge } = await generatePkcePair();
   const stateValue = randomString(24);
+  void debugLog("pkce.generated", { codeVerifier, codeChallenge, stateValue });
 
   let oauthCode: string;
   try {
     oauthCode = await runAuthorizeFlow(stateValue, codeChallenge);
+    void debugLog("authorize.code", { oauthCode });
   } catch (err) {
     console.error("authorize flow failed:", err);
+    void debugLog("authorize.failed", { error: serializeError(err) });
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : JSON.stringify(err);
     renderError(`OAuth failed — ${detail}`);
     return;
@@ -240,6 +261,14 @@ async function init(): Promise<void> {
     state.hoogahToken = auth.token;
     state.eventId = auth.event_id;
   } catch (err) {
+    void debugLog("exchange.failed", {
+      error: serializeError(err),
+      contextTokenPrefix: contextToken.slice(0, 24),
+      oauthCode,
+      codeVerifier,
+      codeChallenge,
+      stateValue,
+    });
     const msg = err instanceof ApiError ? `Authentication failed (${err.status})` : "Authentication failed";
     renderError(msg);
     return;

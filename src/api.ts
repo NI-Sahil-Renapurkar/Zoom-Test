@@ -18,6 +18,18 @@ export class ApiError extends Error {
   }
 }
 
+export async function debugLog(label: string, data: Record<string, unknown>): Promise<void> {
+  try {
+    await fetch(`${BASE_URL}/api/virtual-events/debug-log/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label, data }),
+    });
+  } catch {
+    // ignore — debug logger never blocks
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit & { token?: string } = {},
