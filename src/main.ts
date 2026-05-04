@@ -135,6 +135,56 @@ async function handleMockRun(): Promise<void> {
   renderDashboard();
 }
 
+function randomString(length: number): string {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncode(bytes).slice(0, length);
+}
+
+function base64UrlEncode(bytes: Uint8Array): string {
+  let str = "";
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function generatePkcePair(): Promise<{ codeVerifier: string; codeChallenge: string }> {
+  const verifierBytes = new Uint8Array(32);
+  crypto.getRandomValues(verifierBytes);
+  const codeVerifier = base64UrlEncode(verifierBytes);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
+  const codeChallenge = base64UrlEncode(new Uint8Array(digest));
+  return { codeVerifier, codeChallenge };
+}
+
+async function runAuthorizeFlow(stateValue: string, codeChallenge: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("authorize timeout — no onAuthorized event")), 30_000);
+
+    const handler = (event: unknown) => {
+      const e = event as { code?: string; state?: string };
+      console.log("onAuthorized event:", e);
+      if (e.state && e.state !== stateValue) return;
+      if (!e.code) {
+        clearTimeout(timeout);
+        reject(new Error(`onAuthorized fired without code: ${JSON.stringify(e)}`));
+        return;
+      }
+      clearTimeout(timeout);
+      resolve(e.code);
+    };
+
+    (zoomSdk as unknown as { onAuthorized: (cb: (e: unknown) => void) => void }).onAuthorized(handler);
+
+    zoomSdk
+      .authorize({ state: stateValue, codeChallenge } as unknown as Parameters<typeof zoomSdk.authorize>[0])
+      .then((res) => console.log("authorize ack:", res))
+      .catch((err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+  });
+}
+
 async function init(): Promise<void> {
   renderLoading("Initializing Hoogah…");
 
@@ -146,6 +196,7 @@ async function init(): Promise<void> {
         "getRunningContext",
         "promptAuthorize",
         "authorize",
+        "onAuthorized",
       ],
       popoutSize: { width: 480, height: 720 },
       version: "0.16",
@@ -171,24 +222,21 @@ async function init(): Promise<void> {
     return;
   }
 
+  const { codeVerifier, codeChallenge } = await generatePkcePair();
+  const stateValue = randomString(24);
+
   let oauthCode: string;
   try {
-    const authz = await zoomSdk.promptAuthorize();
-    console.log("promptAuthorize response:", authz);
-    oauthCode = (authz as unknown as { code?: string }).code ?? "";
-    if (!oauthCode) {
-      renderError(`promptAuthorize returned no code. Response: ${JSON.stringify(authz)}`);
-      return;
-    }
+    oauthCode = await runAuthorizeFlow(stateValue, codeChallenge);
   } catch (err) {
-    console.error("promptAuthorize threw:", err);
+    console.error("authorize flow failed:", err);
     const detail = err instanceof Error ? `${err.name}: ${err.message}` : JSON.stringify(err);
-    renderError(`OAuth prompt failed — ${detail}`);
+    renderError(`OAuth failed — ${detail}`);
     return;
   }
 
   try {
-    const auth = await exchangeContextToken(contextToken, oauthCode);
+    const auth = await exchangeContextToken(contextToken, oauthCode, codeVerifier);
     state.hoogahToken = auth.token;
     state.eventId = auth.event_id;
   } catch (err) {

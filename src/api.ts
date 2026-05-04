@@ -45,10 +45,15 @@ async function request<T>(
 export async function exchangeContextToken(
   contextToken: string,
   oauthCode: string,
+  codeVerifier: string,
 ): Promise<AuthResponse> {
   return request<AuthResponse>("/api/virtual-events/zoom/auth/", {
     method: "POST",
-    body: JSON.stringify({ context_token: contextToken, oauth_code: oauthCode }),
+    body: JSON.stringify({
+      context_token: contextToken,
+      oauth_code: oauthCode,
+      code_verifier: codeVerifier,
+    }),
   });
 }
 
