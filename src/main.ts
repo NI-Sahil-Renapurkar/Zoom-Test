@@ -174,9 +174,16 @@ async function init(): Promise<void> {
   let oauthCode: string;
   try {
     const authz = await zoomSdk.promptAuthorize();
-    oauthCode = (authz as { code: string }).code;
+    console.log("promptAuthorize response:", authz);
+    oauthCode = (authz as unknown as { code?: string }).code ?? "";
+    if (!oauthCode) {
+      renderError(`promptAuthorize returned no code. Response: ${JSON.stringify(authz)}`);
+      return;
+    }
   } catch (err) {
-    renderError("Please authorize Hoogah to access your Zoom profile, then reopen the app.");
+    console.error("promptAuthorize threw:", err);
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : JSON.stringify(err);
+    renderError(`OAuth prompt failed — ${detail}`);
     return;
   }
 
