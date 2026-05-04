@@ -144,6 +144,8 @@ async function init(): Promise<void> {
         "getAppContext",
         "getMeetingParticipants",
         "getRunningContext",
+        "promptAuthorize",
+        "authorize",
       ],
       popoutSize: { width: 480, height: 720 },
       version: "0.16",
@@ -169,8 +171,17 @@ async function init(): Promise<void> {
     return;
   }
 
+  let oauthCode: string;
   try {
-    const auth = await exchangeContextToken(contextToken);
+    const authz = await zoomSdk.promptAuthorize();
+    oauthCode = (authz as { code: string }).code;
+  } catch (err) {
+    renderError("Please authorize Hoogah to access your Zoom profile, then reopen the app.");
+    return;
+  }
+
+  try {
+    const auth = await exchangeContextToken(contextToken, oauthCode);
     state.hoogahToken = auth.token;
     state.eventId = auth.event_id;
   } catch (err) {
