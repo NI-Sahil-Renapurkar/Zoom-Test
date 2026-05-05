@@ -2,6 +2,7 @@ import zoomSdk from "@zoom/appssdk";
 import type { AppState } from "./types.js";
 import {
   debugLog,
+  devAuth,
   exchangeContextToken,
   fetchAssignmentPlan,
   fetchEventContext,
@@ -139,7 +140,9 @@ async function handleMockRun(): Promise<void> {
 function randomString(length: number): string {
   const bytes = new Uint8Array(length);
   crypto.getRandomValues(bytes);
-  return base64UrlEncode(bytes).slice(0, length);
+  let str = "";
+  for (let i = 0; i < bytes.length; i++) str += String.fromCharCode(bytes[i]);
+  return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "").slice(0, length);
 }
 
 function base64UrlEncode(bytes: Uint8Array): string {
@@ -165,7 +168,7 @@ async function runAuthorizeFlow(stateValue: string, codeChallenge: string): Prom
       const e = event as { code?: string; state?: string };
       console.log("onAuthorized event:", e);
       void debugLog("onAuthorized", { event: e, expectedState: stateValue });
-      if (e.state && e.state !== stateValue) return;
+      if (e.state !== stateValue) return;
       if (!e.code) {
         clearTimeout(timeout);
         reject(new Error(`onAuthorized fired without code: ${JSON.stringify(e)}`));
@@ -203,7 +206,70 @@ function serializeError(err: unknown): Record<string, unknown> {
   return { value: String(err) };
 }
 
+const DEV_MODE = import.meta.env.VITE_DEV_MODE === "true";
+
+function renderDevLogin(): void {
+  mount(`
+    <div class="header">
+      <h1>Hoogah <span style="font-size:12px;color:#f59e0b;font-weight:normal">[DEV MODE]</span></h1>
+    </div>
+    <div class="card">
+      <div class="card-title">Dev Login</div>
+      <input id="dev-email" type="email" placeholder="your@email.com" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px;box-sizing:border-box" />
+      <input id="dev-event-id" type="number" placeholder="Event ID (optional)" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px;margin-top:8px;box-sizing:border-box" />
+      <button class="btn btn-primary" id="dev-login-btn" style="margin-top:12px">Login</button>
+      <div id="dev-error" style="color:#dc2626;font-size:13px;margin-top:8px"></div>
+    </div>`);
+
+  document.getElementById("dev-login-btn")?.addEventListener("click", async () => {
+    const email = (document.getElementById("dev-email") as HTMLInputElement).value.trim();
+    const eventIdInput = (document.getElementById("dev-event-id") as HTMLInputElement).value.trim();
+    const errorEl = document.getElementById("dev-error")!;
+    if (!email) { errorEl.textContent = "Email required"; return; }
+    errorEl.textContent = "";
+
+    try {
+      const auth = await devAuth(email, eventIdInput ? parseInt(eventIdInput, 10) : undefined);
+      state.hoogahToken = auth.token;
+      state.eventId = auth.event_id;
+    } catch (err) {
+      errorEl.textContent = err instanceof ApiError ? `Login failed (${err.status})` : "Login failed";
+      return;
+    }
+
+    await continueAfterAuth("");
+  });
+}
+
+async function continueAfterAuth(meetingUuid: string): Promise<void> {
+  if (!state.eventId) {
+    renderError("No event linked. Enter an Event ID.");
+    return;
+  }
+
+  renderLoading("Loading event…");
+
+  try {
+    state.eventContext = await fetchEventContext(
+      state.hoogahToken!,
+      meetingUuid,
+      DEV_MODE ? state.eventId : null,
+    );
+  } catch (err) {
+    const msg = err instanceof ApiError ? `Failed to load event (${err.status})` : "Failed to load event";
+    renderError(msg);
+    return;
+  }
+
+  renderRoundSelector();
+}
+
 async function init(): Promise<void> {
+  if (DEV_MODE) {
+    renderDevLogin();
+    return;
+  }
+
   renderLoading("Initializing Hoogah…");
 
   try {
@@ -279,22 +345,12 @@ async function init(): Promise<void> {
     return;
   }
 
-  renderLoading("Loading event…");
-
   let meetingUuid: string;
   try {
     const runningContext = await zoomSdk.getRunningContext();
     meetingUuid = (runningContext as { meetingUUID?: string }).meetingUUID ?? "";
   } catch {
     meetingUuid = "";
-  }
-
-  try {
-    state.eventContext = await fetchEventContext(state.hoogahToken!, meetingUuid);
-  } catch (err) {
-    const msg = err instanceof ApiError ? `Failed to load event (${err.status})` : "Failed to load event";
-    renderError(msg);
-    return;
   }
 
   renderLoading("Syncing participants…");
@@ -309,11 +365,10 @@ async function init(): Promise<void> {
     }));
     state.syncResult = await syncParticipants(state.hoogahToken!, state.eventId!, zoomParticipants);
   } catch (err) {
-    // Non-fatal: proceed without sync result
     console.warn("Participant sync failed:", err);
   }
 
-  renderRoundSelector();
+  await continueAfterAuth(meetingUuid);
 }
 
 init().catch((err) => {

@@ -54,6 +54,13 @@ async function request<T>(
   return response.json() as Promise<T>;
 }
 
+export async function devAuth(email: string, eventId?: number): Promise<AuthResponse> {
+  return request<AuthResponse>("/api/virtual-events/zoom/dev-auth/", {
+    method: "POST",
+    body: JSON.stringify({ email, event_id: eventId }),
+  });
+}
+
 export async function exchangeContextToken(
   contextToken: string,
   oauthCode: string,
@@ -69,11 +76,15 @@ export async function exchangeContextToken(
   });
 }
 
-export async function fetchEventContext(token: string, meetingUuid: string): Promise<EventContext> {
-  return request<EventContext>(
-    `/api/virtual-events/zoom/context/?meeting_uuid=${encodeURIComponent(meetingUuid)}`,
-    { token },
-  );
+export async function fetchEventContext(
+  token: string,
+  meetingUuid: string,
+  eventId?: number | null,
+): Promise<EventContext> {
+  const params = eventId
+    ? `event_id=${eventId}`
+    : `meeting_uuid=${encodeURIComponent(meetingUuid)}`;
+  return request<EventContext>(`/api/virtual-events/zoom/context/?${params}`, { token });
 }
 
 export async function syncParticipants(
